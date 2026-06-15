@@ -92,12 +92,14 @@ impl VeroContract {
 
         // 1. Verify guardian status
         if !guardian::is_guardian(&env, &guardian) {
+            reentrancy::unlock(&env);
             return Err(ContractError::NotAuthorized);
         }
 
         // 2. Prevent duplicate votes
         let voted_key = DataKey::Voted(task_id, guardian.clone());
         if env.storage().instance().has(&voted_key) {
+            reentrancy::unlock(&env);
             return Err(ContractError::DuplicateVote);
         }
 
@@ -111,11 +113,13 @@ impl VeroContract {
 
         // 4. Load the task — single storage read
         let task_key = DataKey::Task(task_id);
-        let mut t: types::Task = env
-            .storage()
-            .instance()
-            .get(&task_key)
-            .ok_or(ContractError::NotAuthorized)?;
+        let mut t: types::Task = match env.storage().instance().get(&task_key) {
+            Some(t) => t,
+            None => {
+                reentrancy::unlock(&env);
+                return Err(ContractError::NotAuthorized);
+            }
+        };
 
         // 5. Atomically increment weight with overflow protection
         t.total_weight_accrued = t
