@@ -6,6 +6,9 @@ pub struct Task {
     pub id: u64,
     pub votes: u32,
     pub is_done: bool,
+    /// Cumulative reputation weight accrued from all guardian votes.
+    /// Consensus is reached when this meets or exceeds the weight threshold.
+    pub total_weight_accrued: u64,
 }
 
 /// Represents an active reward stream initiated via the Drips protocol
