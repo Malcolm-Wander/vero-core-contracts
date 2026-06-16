@@ -1,7 +1,9 @@
 #![no_std]
 
+mod circuit_breaker;
 mod drips;
 mod guardian;
+mod reentrancy;
 mod reputation;
 mod task;
 mod types;
@@ -73,6 +75,7 @@ impl VeroContract {
         admin: Address,
         task_id: u64,
     ) -> Result<(), ContractError> {
+        circuit_breaker::require_not_paused(&env)?;
         task::register_task(&env, admin, task_id)
     }
 
@@ -88,6 +91,7 @@ impl VeroContract {
     /// * `ZeroWeightVote` — guardian's reputation score is zero.
     /// * `WeightOverflow` — adding the weight would overflow u64.
     pub fn vote(env: Env, guardian: Address, task_id: u64) -> Result<(), ContractError> {
+        circuit_breaker::require_not_paused(&env)?;
         guardian.require_auth();
 
         // 1. Verify guardian status
@@ -104,8 +108,12 @@ impl VeroContract {
         }
 
         // 3. Fetch voting power from reputation — single storage read
-        let weight = reputation::calculate_voting_power(&env, &guardian)
-            .ok_or(ContractError::NoReputationScore)?;
+        let weight = match reputation::calculate_voting_power(&env, &guardian) {
+            Some(w) => w,
+            None => {
+                return Err(ContractError::NoReputationScore);
+            }
+        };
 
         if weight == 0 {
             return Err(ContractError::ZeroWeightVote);
@@ -122,10 +130,12 @@ impl VeroContract {
         };
 
         // 5. Atomically increment weight with overflow protection
-        t.total_weight_accrued = t
-            .total_weight_accrued
-            .checked_add(weight)
-            .ok_or(ContractError::WeightOverflow)?;
+        t.total_weight_accrued = match t.total_weight_accrued.checked_add(weight) {
+            Some(v) => v,
+            None => {
+                return Err(ContractError::WeightOverflow);
+            }
+        };
         t.votes += 1;
 
         // 6. Check weight threshold for consensus
@@ -190,5 +200,29 @@ impl VeroContract {
     /// Returns the reward stream record for a given task, if one exists.
     pub fn get_reward_stream(env: Env, task_id: u64) -> Option<RewardStream> {
         drips::get_reward_stream(&env, task_id)
+    }
+
+    // ─── Circuit breaker ───────────────────────────────────────────
+
+    /// Returns true if the contract is currently paused by the circuit breaker.
+    pub fn is_paused(env: Env) -> bool {
+        env.storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false)
+    }
+
+    /// Reports a transaction failure to the circuit breaker.
+    /// Anyone can call this after observing a failed contract invocation.
+    /// Storage writes here are committed because this call succeeds (returns Ok).
+    /// If the failure count exceeds the threshold, the contract is paused and
+    /// a `cb_trip` event is published to alert the admin.
+    pub fn record_failure(env: Env) {
+        circuit_breaker::record_failure(&env);
+    }
+
+    /// Resets the failure counter and unpauses the contract. Admin only.
+    pub fn reset_circuit_breaker(env: Env, admin: Address) {
+        circuit_breaker::reset(&env, admin);
     }
 }

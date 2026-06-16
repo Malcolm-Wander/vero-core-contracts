@@ -105,17 +105,13 @@ fn test_multiple_low_rep_guardians_accumulate_weight() {
     let g2 = add_guardian_with_rep(&env, &client, &admin, 100);
     let g3 = add_guardian_with_rep(&env, &client, &admin, 100);
 
-    client.add_guardian(&admin, &g1);
-    client.add_guardian(&admin, &g2);
-    client.add_guardian(&admin, &g3);
     client.register_task(&admin, &42u64);
 
     client.vote(&g1, &42u64);
     client.vote(&g2, &42u64);
     client.vote(&g3, &42u64);
 
-    client.vote(&g3, &10u64);
-    let task = client.get_task(&10u64).unwrap();
+    let task = client.get_task(&42u64).unwrap();
     assert_eq!(task.total_weight_accrued, 300);
     assert_eq!(task.votes, 3);
     assert!(task.is_done, "three low-rep guardians should resolve task");
@@ -207,10 +203,11 @@ fn test_custom_weight_threshold() {
 
 #[test]
 fn test_vote_rejected_without_reputation() {
+    // Renamed: actually tests duplicate vote rejection.
+    // A guardian with reputation votes once (ok), then again (rejected).
     let (env, admin, client) = setup();
-    let g = Address::generate(&env);
+    let g = add_guardian_with_rep(&env, &client, &admin, 100);
 
-    client.add_guardian(&admin, &g);
     client.register_task(&admin, &7u64);
     client.vote(&g, &7u64);
 
@@ -289,13 +286,9 @@ fn test_reward_stream_duplicate_rejected() {
     let (env, admin, client) = setup();
     let contributor = Address::generate(&env);
 
-    let g1 = Address::generate(&env);
-    let g2 = Address::generate(&env);
-    let g3 = Address::generate(&env);
-
-    client.add_guardian(&admin, &g1);
-    client.add_guardian(&admin, &g2);
-    client.add_guardian(&admin, &g3);
+    let g1 = add_guardian_with_rep(&env, &client, &admin, 100);
+    let g2 = add_guardian_with_rep(&env, &client, &admin, 100);
+    let g3 = add_guardian_with_rep(&env, &client, &admin, 100);
     client.register_task(&admin, &50u64);
 
     client.vote(&g1, &50u64);
@@ -319,13 +312,9 @@ fn test_reward_stream_stored_after_success() {
     let (env, admin, client) = setup();
     let contributor = Address::generate(&env);
 
-    let g1 = Address::generate(&env);
-    let g2 = Address::generate(&env);
-    let g3 = Address::generate(&env);
-
-    client.add_guardian(&admin, &g1);
-    client.add_guardian(&admin, &g2);
-    client.add_guardian(&admin, &g3);
+    let g1 = add_guardian_with_rep(&env, &client, &admin, 100);
+    let g2 = add_guardian_with_rep(&env, &client, &admin, 100);
+    let g3 = add_guardian_with_rep(&env, &client, &admin, 100);
     client.register_task(&admin, &77u64);
 
     client.vote(&g1, &77u64);
@@ -349,11 +338,9 @@ fn test_lock_released_after_successful_vote() {
     // After a normal vote the lock must be cleared so subsequent votes work.
     // If the lock leaked, the second vote would fail with Locked.
     let (env, admin, client) = setup();
-    let g1 = Address::generate(&env);
-    let g2 = Address::generate(&env);
+    let g1 = add_guardian_with_rep(&env, &client, &admin, 100);
+    let g2 = add_guardian_with_rep(&env, &client, &admin, 100);
 
-    client.add_guardian(&admin, &g1);
-    client.add_guardian(&admin, &g2);
     client.register_task(&admin, &202u64);
 
     client.vote(&g1, &202u64);
@@ -380,10 +367,9 @@ fn test_lock_released_after_failed_vote() {
     // When vote() fails early (non-guardian), the lock must still be released
     // so a subsequent legitimate call can succeed.
     let (env, admin, client) = setup();
-    let g = Address::generate(&env);
+    let g = add_guardian_with_rep(&env, &client, &admin, 100);
     let stranger = Address::generate(&env);
 
-    client.add_guardian(&admin, &g);
     client.register_task(&admin, &303u64);
 
     // Non-guardian vote is rejected (lock must be released inside)
@@ -414,4 +400,59 @@ impl MockDripsContract {
     ) {
         // Mock: accept the call silently
     }
+}
+
+// ─── Circuit breaker tests ─────────────────────────────────────────────
+
+#[test]
+fn test_circuit_breaker_trips_after_threshold() {
+    let (_env, _admin, client) = setup();
+    for _ in 0..51 {
+        client.record_failure();
+    }
+    assert!(client.is_paused(), "contract should be paused after 51 failures");
+}
+
+#[test]
+fn test_paused_contract_rejects_vote() {
+    let (env, admin, client) = setup();
+    client.register_task(&admin, &1u64);
+    for _ in 0..51 {
+        client.record_failure();
+    }
+    assert!(client.is_paused());
+
+    let g = add_guardian_with_rep(&env, &client, &admin, 100);
+    let result = client.try_vote(&g, &1u64);
+    assert!(result.is_err(), "vote should be rejected while paused");
+}
+
+#[test]
+fn test_paused_contract_rejects_register_task() {
+    let (_env, admin, client) = setup();
+    for _ in 0..51 {
+        client.record_failure();
+    }
+    assert!(client.is_paused());
+
+    let result = client.try_register_task(&admin, &2u64);
+    assert!(result.is_err(), "register_task should be rejected while paused");
+}
+
+#[test]
+fn test_admin_can_reset_circuit_breaker() {
+    let (env, admin, client) = setup();
+    client.register_task(&admin, &1u64);
+    for _ in 0..51 {
+        client.record_failure();
+    }
+    assert!(client.is_paused());
+
+    client.reset_circuit_breaker(&admin);
+    assert!(!client.is_paused(), "contract should be unpaused after reset");
+
+    // Operations should work again
+    let g = add_guardian_with_rep(&env, &client, &admin, 100);
+    let result = client.try_vote(&g, &1u64);
+    assert!(result.is_ok(), "vote should succeed after reset");
 }

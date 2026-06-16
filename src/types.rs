@@ -32,6 +32,10 @@ pub enum DataKey {
     DripsAddress,
     RewardStream(u64), // keyed by task_id
     Lock,              // re-entrancy mutex
+    WeightThreshold,
+    Reputation(Address),   // u64 reputation score for a guardian
+    FailureCount,          // circuit breaker failure counter
+    Paused,                // circuit breaker pause flag
 }
 
 #[contracterror]
@@ -43,4 +47,8 @@ pub enum ContractError {
     StreamAlreadyActive = 4,
     DripsCallFailed = 5,
     Locked = 6,
+    NoReputationScore = 7,
+    ZeroWeightVote = 8,
+    WeightOverflow = 9,
+    ContractPaused = 10,
 }
