@@ -28,6 +28,9 @@ pub enum DataKey {
     Admin,
     DripsAddress,
     RewardStream(u64), // keyed by task_id
+    TokenAddress,
+    LockThreshold,
+    LockedBalance(Address),
 }
 
 #[contracterror]
@@ -38,4 +41,9 @@ pub enum ContractError {
     TaskNotVerified = 3,
     StreamAlreadyActive = 4,
     DripsCallFailed = 5,
+    AlreadyInitialized = 6,
+    NotInitialized = 7,
+    InsufficientLockedBalance = 8,
+    StillGuardian = 9,
+    NotGuardian = 10,
 }
