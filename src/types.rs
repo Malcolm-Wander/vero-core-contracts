@@ -57,6 +57,7 @@ pub enum DataKey {
     AllTasks,
     AllVotes,
     AllRewardStreams,
+    Initialized,
 }
 
 /// Every public write operation exposed by VeroContract.

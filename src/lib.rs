@@ -27,16 +27,15 @@ pub struct VeroCore;
 
 #[contractimpl]
 impl VeroCore {
-    pub fn initialize(env: Env, admin: Address) -> Result<(), ContractError> {
-        if env.storage().instance().has(&DataKey::Admin) {
+    pub fn initialize(env: Env, token: Address, lock_threshold: i128) -> Result<(), ContractError> {
+        if env.storage().instance().get::<_, bool>(&DataKey::Initialized).unwrap_or(false) {
             return Err(ContractError::AlreadyInitialized);
         }
-        admin.require_auth();
-        env.storage().instance().set(&DataKey::Admin, &admin);
+        env.storage().instance().set(&DataKey::Initialized, &true);
+        env.storage().instance().set(&DataKey::TokenAddress, &token);
+        env.storage().instance().set(&DataKey::LockThreshold, &lock_threshold);
         env.storage().instance().set(&DataKey::Paused, &false);
-        env.storage()
-            .instance()
-            .extend_ttl(100_000, 100_000);
+        env.storage().instance().extend_ttl(100_000, 100_000);
         Ok(())
     }
 
@@ -241,7 +240,7 @@ impl VeroCore {
         events::emit_weighted_vote(&env, task_id, &guardian, weight);
 
         reentrancy::unlock(&env);
-        result
+        Ok(())
     }
 
     pub fn get_task(env: Env, task_id: u64) -> Option<types::Task> {
